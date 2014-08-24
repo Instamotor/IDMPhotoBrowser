@@ -8,6 +8,7 @@
 
 #import "IDMPhoto.h"
 #import "IDMPhotoBrowser.h"
+#import "UIImageView+AFNetworking.h"
 
 // Private
 @interface IDMPhoto () {
@@ -114,6 +115,13 @@ caption = _caption;
 - (id)initWithURL:(NSURL *)url {
 	if ((self = [super init])) {
 		_photoURL = [url copy];
+        
+        NSURLRequest *request = [[NSURLRequest alloc] initWithURL:_photoURL
+                                                      cachePolicy:NSURLRequestReturnCacheDataElseLoad
+                                                  timeoutInterval:0];
+        
+        _underlyingImage = [[UIImageView sharedImageCache] cachedImageForRequest:request];
+        
 	}
 	return self;
 }
@@ -127,6 +135,8 @@ caption = _caption;
 - (void)loadUnderlyingImageAndNotify {
     NSAssert([[NSThread currentThread] isMainThread], @"This method must be called on the main thread.");
     _loadingInProgress = YES;
+    
+    
     if (self.underlyingImage) {
         // Image already loaded
         [self imageLoadingComplete];
@@ -135,6 +145,7 @@ caption = _caption;
             // Load async from file
             [self performSelectorInBackground:@selector(loadImageFromFileAsync) withObject:nil];
         } else if (_photoURL) {
+            
             // Load async from web (using AFNetworking)
             NSURLRequest *request = [[NSURLRequest alloc] initWithURL:_photoURL
                                                           cachePolicy:NSURLRequestReturnCacheDataElseLoad
@@ -147,6 +158,7 @@ caption = _caption;
                 UIImage *image = responseObject;
                 self.underlyingImage = image;
                 [self performSelectorOnMainThread:@selector(imageLoadingComplete) withObject:nil waitUntilDone:NO];
+                [[UIImageView sharedImageCache] cacheImage:responseObject forRequest:request];
             } failure:^(AFHTTPRequestOperation *operation, NSError *error) { }];
             
             [op setDownloadProgressBlock:^(NSUInteger bytesRead, long long totalBytesRead, long long totalBytesExpectedToRead) {
