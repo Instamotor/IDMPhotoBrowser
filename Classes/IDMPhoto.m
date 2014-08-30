@@ -8,7 +8,7 @@
 
 #import "IDMPhoto.h"
 #import "IDMPhotoBrowser.h"
-#import "UIImageView+AFNetworking.h"
+#import "SDWebImageManager.h"
 
 // Private
 @interface IDMPhoto () {
@@ -35,7 +35,7 @@
 @implementation IDMPhoto
 
 // Properties
-@synthesize underlyingImage = _underlyingImage, 
+@synthesize underlyingImage = _underlyingImage,
 photoURL = _photoURL,
 caption = _caption;
 
@@ -55,33 +55,33 @@ caption = _caption;
 
 + (NSArray *)photosWithImages:(NSArray *)imagesArray {
     NSMutableArray *photos = [NSMutableArray arrayWithCapacity:imagesArray.count];
-    
+
     for (UIImage *image in imagesArray) {
         if ([image isKindOfClass:[UIImage class]]) {
             IDMPhoto *photo = [IDMPhoto photoWithImage:image];
             [photos addObject:photo];
         }
     }
-    
+
     return photos;
 }
 
 + (NSArray *)photosWithFilePaths:(NSArray *)pathsArray {
     NSMutableArray *photos = [NSMutableArray arrayWithCapacity:pathsArray.count];
-    
+
     for (NSString *path in pathsArray) {
         if ([path isKindOfClass:[NSString class]]) {
             IDMPhoto *photo = [IDMPhoto photoWithFilePath:path];
             [photos addObject:photo];
         }
     }
-    
+
     return photos;
 }
 
 + (NSArray *)photosWithURLs:(NSArray *)urlsArray {
     NSMutableArray *photos = [NSMutableArray arrayWithCapacity:urlsArray.count];
-    
+
     for (id url in urlsArray) {
         if ([url isKindOfClass:[NSURL class]]) {
             IDMPhoto *photo = [IDMPhoto photoWithURL:url];
@@ -92,7 +92,7 @@ caption = _caption;
             [photos addObject:photo];
         }
     }
-    
+
     return photos;
 }
 
@@ -115,13 +115,6 @@ caption = _caption;
 - (id)initWithURL:(NSURL *)url {
 	if ((self = [super init])) {
 		_photoURL = [url copy];
-        
-        NSURLRequest *request = [[NSURLRequest alloc] initWithURL:_photoURL
-                                                      cachePolicy:NSURLRequestReturnCacheDataElseLoad
-                                                  timeoutInterval:0];
-        
-        _underlyingImage = [[UIImageView sharedImageCache] cachedImageForRequest:request];
-        
 	}
 	return self;
 }
@@ -135,8 +128,6 @@ caption = _caption;
 - (void)loadUnderlyingImageAndNotify {
     NSAssert([[NSThread currentThread] isMainThread], @"This method must be called on the main thread.");
     _loadingInProgress = YES;
-    
-    
     if (self.underlyingImage) {
         // Image already loaded
         [self imageLoadingComplete];
@@ -145,30 +136,25 @@ caption = _caption;
             // Load async from file
             [self performSelectorInBackground:@selector(loadImageFromFileAsync) withObject:nil];
         } else if (_photoURL) {
-            
-            // Load async from web (using AFNetworking)
-            NSURLRequest *request = [[NSURLRequest alloc] initWithURL:_photoURL
-                                                          cachePolicy:NSURLRequestReturnCacheDataElseLoad
-                                                      timeoutInterval:0];
-            
-            AFHTTPRequestOperation *op = [[AFHTTPRequestOperation alloc] initWithRequest:request];
-            op.responseSerializer = [AFImageResponseSerializer serializer];
 
-            [op setCompletionBlockWithSuccess:^(AFHTTPRequestOperation *operation, id responseObject) {
-                UIImage *image = responseObject;
-                self.underlyingImage = image;
-                [self performSelectorOnMainThread:@selector(imageLoadingComplete) withObject:nil waitUntilDone:NO];
-                [[UIImageView sharedImageCache] cacheImage:responseObject forRequest:request];
-            } failure:^(AFHTTPRequestOperation *operation, NSError *error) { }];
-            
-            [op setDownloadProgressBlock:^(NSUInteger bytesRead, long long totalBytesRead, long long totalBytesExpectedToRead) {
-                CGFloat progress = ((CGFloat)totalBytesRead)/((CGFloat)totalBytesExpectedToRead);
-                if (self.progressUpdateBlock) {
-                    self.progressUpdateBlock(progress);
-                }
-            }];
-            
-            [[NSOperationQueue mainQueue] addOperation:op];
+            SDWebImageManager *manager = [SDWebImageManager sharedManager];
+            [manager downloadImageWithURL:_photoURL
+                                  options:0
+                                 progress:^(NSInteger receivedSize, NSInteger expectedSize) {
+                                     CGFloat progress = ((CGFloat)receivedSize)/((CGFloat)expectedSize);
+                                     if (self.progressUpdateBlock) {
+                                         self.progressUpdateBlock(progress);
+                                     }
+                                 }
+                                completed:^(UIImage *image, NSError *error, SDImageCacheType cacheType, BOOL finished, NSURL *imageURL) {
+                                    if (image)
+                                    {
+                                        // do something with image
+                                        self.underlyingImage = image;
+                                        [self performSelectorOnMainThread:@selector(imageLoadingComplete) withObject:nil waitUntilDone:NO];
+                                    }
+                                }];
+
         } else {
             // Failed - no source
             self.underlyingImage = nil;
@@ -193,7 +179,7 @@ caption = _caption;
     // System only supports RGB, set explicitly and prevent context error
     // if the downloaded image is not the supported format
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-    
+
     CGContextRef context = CGBitmapContextCreate(NULL,
                                                  CGImageGetWidth(imageRef),
                                                  CGImageGetHeight(imageRef),
@@ -205,16 +191,16 @@ caption = _caption;
                                                  // makes system don't need to do extra conversion when displayed.
                                                  kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
     CGColorSpaceRelease(colorSpace);
-    
+
     if ( ! context) {
         return nil;
     }
-    
+
     CGRect rect = (CGRect){CGPointZero, CGImageGetWidth(imageRef), CGImageGetHeight(imageRef)};
     CGContextDrawImage(context, rect, imageRef);
     CGImageRef decompressedImageRef = CGBitmapContextCreateImage(context);
     CGContextRelease(context);
-    
+
     UIImage *decompressedImage = [[UIImage alloc] initWithCGImage:decompressedImageRef];
     CGImageRelease(decompressedImageRef);
     return decompressedImage;
@@ -226,26 +212,26 @@ caption = _caption;
         // Do not decode animated images
         return image;
     }
-    
+
     CGImageRef imageRef = image.CGImage;
     CGSize imageSize = CGSizeMake(CGImageGetWidth(imageRef), CGImageGetHeight(imageRef));
     CGRect imageRect = (CGRect){.origin = CGPointZero, .size = imageSize};
-    
+
     CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
     CGBitmapInfo bitmapInfo = CGImageGetBitmapInfo(imageRef);
-    
+
     int infoMask = (bitmapInfo & kCGBitmapAlphaInfoMask);
     BOOL anyNonAlpha = (infoMask == kCGImageAlphaNone ||
                         infoMask == kCGImageAlphaNoneSkipFirst ||
                         infoMask == kCGImageAlphaNoneSkipLast);
-    
+
     // CGBitmapContextCreate doesn't support kCGImageAlphaNone with RGB.
     // https://developer.apple.com/library/mac/#qa/qa1037/_index.html
     if (infoMask == kCGImageAlphaNone && CGColorSpaceGetNumberOfComponents(colorSpace) > 1)
     {
         // Unset the old alpha info.
         bitmapInfo &= ~kCGBitmapAlphaInfoMask;
-        
+
         // Set noneSkipFirst.
         bitmapInfo |= kCGImageAlphaNoneSkipFirst;
     }
@@ -256,7 +242,7 @@ caption = _caption;
         bitmapInfo &= ~kCGBitmapAlphaInfoMask;
         bitmapInfo |= kCGImageAlphaPremultipliedFirst;
     }
-    
+
     // It calculates the bytes-per-row based on the bitsPerComponent and width arguments.
     CGContextRef context = CGBitmapContextCreate(NULL,
                                                  imageSize.width,
@@ -266,15 +252,15 @@ caption = _caption;
                                                  colorSpace,
                                                  bitmapInfo);
     CGColorSpaceRelease(colorSpace);
-    
+
     // If failed, return undecompressed image
     if (!context) return image;
-	
+
     CGContextDrawImage(context, imageRect, imageRef);
     CGImageRef decompressedImageRef = CGBitmapContextCreateImage(context);
-	
+
     CGContextRelease(context);
-	
+
     UIImage *decompressedImage = [UIImage imageWithCGImage:decompressedImageRef scale:image.scale orientation:image.imageOrientation];
     CGImageRelease(decompressedImageRef);
     return decompressedImage;
