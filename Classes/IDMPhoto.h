@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import "IDMPhotoProtocol.h"
+#import <AFNetworking/AFNetworking.h>
 
 // This class models a photo/image and it's caption
 // If you want to handle photos, caching, decompression
@@ -22,6 +23,7 @@ typedef void (^IDMProgressUpdateBlock)(CGFloat progress);
 @property (nonatomic, strong) NSString *caption;
 @property (nonatomic, strong) NSURL *photoURL;
 @property (nonatomic, strong) IDMProgressUpdateBlock progressUpdateBlock;
+@property (nonatomic, strong) UIImage *placeholderImage;
 
 // Class
 + (IDMPhoto *)photoWithImage:(UIImage *)image;
@@ -38,3 +40,4 @@ typedef void (^IDMProgressUpdateBlock)(CGFloat progress);
 - (id)initWithURL:(NSURL *)url;
 
 @end
+

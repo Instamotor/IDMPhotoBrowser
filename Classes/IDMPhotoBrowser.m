@@ -69,6 +69,8 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
     //UIImage *_backgroundScreenshot;
     
     UIWindow *_applicationWindow;
+	
+	// iOS 7
     UIViewController *_applicationTopViewController;
     int _previousModalPresentationStyle;
 }
@@ -134,6 +136,7 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 @synthesize arrowButtonsChangePhotosAnimated = _arrowButtonsChangePhotosAnimated;
 @synthesize forceHideStatusBar = _forceHideStatusBar;
 @synthesize usePopAnimation = _usePopAnimation;
+@synthesize disableVerticalSwipe = _disableVerticalSwipe;
 @synthesize actionsSheet = _actionsSheet, activityViewController = _activityViewController;
 @synthesize trackTintColor = _trackTintColor, progressTintColor = _progressTintColor;
 @synthesize delegate = _delegate;
@@ -165,7 +168,8 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
         
         _forceHideStatusBar = NO;
         _usePopAnimation = NO;
-        
+		_disableVerticalSwipe = NO;
+		
         _useWhiteBackgroundColor = NO;
         _leftArrowImage = _rightArrowImage = _leftArrowSelectedImage = _rightArrowSelectedImage = nil;
         
@@ -182,15 +186,23 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
             self.automaticallyAdjustsScrollViewInsets = NO;
         
         _applicationWindow = [[[UIApplication sharedApplication] delegate] window];
-        
-        _applicationTopViewController = [self topviewController];
-        
-        _previousModalPresentationStyle = _applicationTopViewController.modalPresentationStyle;
-        
-        _applicationTopViewController.modalPresentationStyle = UIModalPresentationCurrentContext;
-        
-        self.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
-        
+		
+		if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0"))
+		{
+			self.modalPresentationStyle = UIModalPresentationCustom;
+			self.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+            self.modalPresentationCapturesStatusBarAppearance = YES;
+		}
+		else
+		{
+			_applicationTopViewController = [self topviewController];
+			_previousModalPresentationStyle = _applicationTopViewController.modalPresentationStyle;
+			_applicationTopViewController.modalPresentationStyle = UIModalPresentationCurrentContext;
+			self.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+		}
+		
+		self.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+		
         // Listen for IDMPhoto notifications
         [[NSNotificationCenter defaultCenter] addObserver:self
                                                  selector:@selector(handleIDMPhotoLoadingDidEndNotification:)
@@ -283,7 +295,7 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
     [scrollView setCenter:translatedPoint];
     
     float newY = scrollView.center.y - viewHalfHeight;
-    float newAlpha = 1 - abs(newY)/viewHeight; //abs(newY)/viewHeight * 1.8;
+    float newAlpha = 1 - fabsf(newY)/viewHeight; //abs(newY)/viewHeight * 1.8;
     
     self.view.opaque = YES;
     
@@ -293,10 +305,6 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
     if ([(UIPanGestureRecognizer*)sender state] == UIGestureRecognizerStateEnded) {
         if(scrollView.center.y > viewHalfHeight+40 || scrollView.center.y < viewHalfHeight-40) // Automatic Dismiss View
         {
-            if ([_delegate respondsToSelector:@selector(photoBrowser:willDismissAtPageIndex:)]) {
-                [_delegate photoBrowser:self willDismissAtPageIndex:_currentPageIndex];
-            }
-            
             if (_senderViewForAnimation && _currentPageIndex == _initalPageIndex) {
                 [self performCloseAnimationWithScrollView:scrollView];
                 return;
@@ -367,6 +375,7 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 
 - (void)performPresentAnimation {
     self.view.alpha = 0.0f;
+    _pagingScrollView.alpha = 0.0f;
     
     UIImage *imageFromView = _scaleImage ? _scaleImage : [self getImageFromView:_senderViewForAnimation];
     imageFromView = [self rotateImageToCurrentOrientation:imageFromView];
@@ -391,6 +400,7 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
     
     void (^completion)() = ^() {
         self.view.alpha = 1.0f;
+        _pagingScrollView.alpha = 1.0f;
         resizableImageView.backgroundColor = [UIColor colorWithWhite:(_useWhiteBackgroundColor) ? 1 : 0 alpha:1];
         [fadeView removeFromSuperview];
         [resizableImageView removeFromSuperview];
@@ -420,10 +430,14 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 }
 
 - (void)performCloseAnimationWithScrollView:(IDMZoomingScrollView*)scrollView {
-    
-    float fadeAlpha = 1 - abs(scrollView.frame.origin.y)/scrollView.frame.size.height;
+    float fadeAlpha = 1 - fabs(scrollView.frame.origin.y)/scrollView.frame.size.height;
     
     UIImage *imageFromView = [scrollView.photo underlyingImage];
+    if (!imageFromView && [scrollView.photo respondsToSelector:@selector(placeholderImage)]) {
+        imageFromView = [scrollView.photo placeholderImage];
+    }
+    
+    //imageFromView = [self rotateImageToCurrentOrientation:imageFromView];
     
     CGRect screenBound = [[UIScreen mainScreen] bounds];
     CGFloat screenWidth = screenBound.size.width;
@@ -453,7 +467,7 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
         [resizableImageView removeFromSuperview];
         
         [self prepareForClosePhotoBrowser];
-        [self dismissPhotoBrowserAnimated:YES];
+        [self dismissPhotoBrowserAnimated:NO];
     };
     
     [UIView animateWithDuration:_animationDuration animations:^{
@@ -480,7 +494,6 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 #pragma mark - Genaral
 
 - (void)prepareForClosePhotoBrowser {
-    
     // Gesture
     [_applicationWindow removeGestureRecognizer:_panGesture];
     
@@ -492,11 +505,18 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 
 - (void)dismissPhotoBrowserAnimated:(BOOL)animated {
     self.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+
+    if ([_delegate respondsToSelector:@selector(photoBrowser:willDismissAtPageIndex:)])
+        [_delegate photoBrowser:self willDismissAtPageIndex:_currentPageIndex];
+    
     [self dismissViewControllerAnimated:animated completion:^{
         if ([_delegate respondsToSelector:@selector(photoBrowser:didDismissAtPageIndex:)])
             [_delegate photoBrowser:self didDismissAtPageIndex:_currentPageIndex];
-        
-        _applicationTopViewController.modalPresentationStyle = _previousModalPresentationStyle;
+		
+		if (SYSTEM_VERSION_LESS_THAN(@"8.0"))
+		{
+			_applicationTopViewController.modalPresentationStyle = _previousModalPresentationStyle;
+		}
     }];
 }
 
@@ -532,9 +552,6 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 #pragma mark - View Lifecycle
 
 - (void)viewDidLoad {
-    // Transition animation
-    [self performPresentAnimation];
-    
     // View
 	self.view.backgroundColor = [UIColor colorWithWhite:(_useWhiteBackgroundColor ? 1 : 0) alpha:1];
     
@@ -551,6 +568,9 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 	_pagingScrollView.backgroundColor = [UIColor clearColor];
     _pagingScrollView.contentSize = [self contentSizeForPagingScrollView];
 	[self.view addSubview:_pagingScrollView];
+    
+    // Transition animation
+    [self performPresentAnimation];
     
     UIInterfaceOrientation currentOrientation = [UIApplication sharedApplication].statusBarOrientation;
     
@@ -802,8 +822,9 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 	_pagingScrollView.contentOffset = [self contentOffsetForPageAtIndex:_currentPageIndex];
     [self tilePages];
     _performingLayout = NO;
-    
-    [self.view addGestureRecognizer:_panGesture];
+	
+	if(! _disableVerticalSwipe)
+		[self.view addGestureRecognizer:_panGesture];
 }
 
 #pragma mark - Data
@@ -849,6 +870,9 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 			return [photo underlyingImage];
 		} else {
             [photo loadUnderlyingImageAndNotify];
+            if ([photo respondsToSelector:@selector(placeholderImage)]) {
+                return [photo placeholderImage];
+            }
 		}
 	}
     
@@ -1113,7 +1137,7 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 - (void)updateToolbar {
     // Counter
 	if ([self numberOfPhotos] > 1) {
-		_counterLabel.text = [NSString stringWithFormat:@"%u %@ %lu", _currentPageIndex+1, IDMPhotoBrowserLocalizedStrings(@"of"), (unsigned long)[self numberOfPhotos]];
+		_counterLabel.text = [NSString stringWithFormat:@"%lu %@ %lu", (unsigned long)(_currentPageIndex+1), IDMPhotoBrowserLocalizedStrings(@"of"), (unsigned long)[self numberOfPhotos]];
 	} else {
 		_counterLabel.text = nil;
 	}
@@ -1214,17 +1238,11 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
 #pragma mark - Buttons
 
 - (void)doneButtonPressed:(id)sender {
-    
     if (_senderViewForAnimation && _currentPageIndex == _initalPageIndex) {
         IDMZoomingScrollView *scrollView = [self pageDisplayedAtIndex:_currentPageIndex];
         [self performCloseAnimationWithScrollView:scrollView];
     }
     else {
-        
-        if ([_delegate respondsToSelector:@selector(photoBrowser:willDismissAtPageIndex:)]) {
-            [_delegate photoBrowser:self willDismissAtPageIndex:_currentPageIndex];
-        }
-        
         _senderViewForAnimation.hidden = NO;
         [self prepareForClosePhotoBrowser];
         [self dismissPhotoBrowserAnimated:YES];
@@ -1244,11 +1262,22 @@ NSLocalizedStringFromTableInBundle((key), nil, [NSBundle bundleWithPath:[[NSBund
             self.activityViewController = [[UIActivityViewController alloc] initWithActivityItems:activityItems applicationActivities:nil];
             
             __typeof__(self) __weak selfBlock = self;
-            [self.activityViewController setCompletionHandler:^(NSString *activityType, BOOL completed) {
-                [selfBlock hideControlsAfterDelay];
-                selfBlock.activityViewController = nil;
-            }];
-            
+			
+			if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(@"8.0"))
+			{
+				[self.activityViewController setCompletionWithItemsHandler:^(NSString *activityType, BOOL completed, NSArray *returnedItems, NSError *activityError) {
+					[selfBlock hideControlsAfterDelay];
+					selfBlock.activityViewController = nil;
+				}];
+			}
+			else
+			{
+				[self.activityViewController setCompletionHandler:^(NSString *activityType, BOOL completed) {
+					[selfBlock hideControlsAfterDelay];
+					selfBlock.activityViewController = nil;
+				}];
+			}
+			
             [self presentViewController:self.activityViewController animated:YES completion:nil];
         }
         else
